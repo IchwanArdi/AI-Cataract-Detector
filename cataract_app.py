@@ -82,13 +82,7 @@ st.markdown("""
 # Load model function with enhanced error handling
 @st.cache_resource
 def load_model():
-    model_paths = [
-        'best_cataract_model.h5',
-        'cataract_model.h5',
-        'model.h5',
-        './models/best_cataract_model.h5',
-        './models/cataract_model.h5'
-    ]
+    model_paths = [ 'best_cataract_model_fixed.h5', 'cataract_model_new.h5', 'best_cataract_model.h5' ]
     
     for model_path in model_paths:
         try:
