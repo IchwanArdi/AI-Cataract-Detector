@@ -84,7 +84,7 @@ st.markdown("""
 def load_model():
     try:
         # Try to load the best model first
-        model = tf.keras.models.load_model('best_cataract_model_v2.h5')
+        model = tf.keras.models.load_model('best_cataract_model.h5')
         st.success("✅ Model berhasil dimuat!")
         
         # Get model input shape
