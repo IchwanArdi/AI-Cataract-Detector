@@ -193,7 +193,7 @@ def create_confidence_gauge(confidence):
 # Main application
 def main():
     # Header
-    st.markdown('<h1 class="main-header">👁️ Cataract Detection System</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">Cataract Detection System</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Upload gambar mata untuk deteksi katarak menggunakan AI</p>', unsafe_allow_html=True)
     
     # Load model
