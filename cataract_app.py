@@ -79,29 +79,89 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load model function with caching
+# Load model function with enhanced error handling
 @st.cache_resource
 def load_model():
-    try:
-        # Try to load the best model first
-        model = tf.keras.models.load_model('best_cataract_model.h5')
-        st.success("✅ Model berhasil dimuat!")
-        
-        # Get model input shape
-        input_shape = model.input_shape
-        st.info(f"📏 Model input shape: {input_shape}")
-        
-        return model, True, input_shape
-    except Exception as e:
-        st.error(f"❌ Error loading model: {str(e)}")
-        st.warning("⚠️ Pastikan path model sudah benar dan model sudah di-training.")
-        return None, False, None
+    model_paths = [
+        'best_cataract_model.h5',
+        'cataract_model.h5',
+        'model.h5',
+        './models/best_cataract_model.h5',
+        './models/cataract_model.h5'
+    ]
+    
+    for model_path in model_paths:
+        try:
+            st.info(f"🔄 Mencoba memuat model dari: {model_path}")
+            
+            # Try loading with different methods
+            try:
+                model = tf.keras.models.load_model(model_path)
+            except Exception as e1:
+                st.warning(f"Method 1 failed: {str(e1)}")
+                # Try with compile=False
+                try:
+                    model = tf.keras.models.load_model(model_path, compile=False)
+                    st.info("✅ Model dimuat tanpa kompilasi")
+                except Exception as e2:
+                    st.warning(f"Method 2 failed: {str(e2)}")
+                    continue
+            
+            # Get model input shape
+            input_shape = model.input_shape
+            st.success(f"✅ Model berhasil dimuat dari: {model_path}")
+            st.info(f"📏 Model input shape: {input_shape}")
+            
+            # Validate input shape
+            if len(input_shape) == 4:
+                channels = input_shape[3]
+                height = input_shape[1] 
+                width = input_shape[2]
+                st.info(f"📊 Detected channels: {channels}, Size: {height}x{width}")
+                
+                return model, True, input_shape
+            else:
+                st.warning(f"⚠️ Unexpected input shape: {input_shape}")
+                return model, True, input_shape
+            
+        except Exception as e:
+            st.warning(f"❌ Failed to load {model_path}: {str(e)}")
+            continue
+    
+    # If all model paths fail, show detailed error
+    st.error("❌ Tidak dapat memuat model dari path manapun")
+    st.error("📝 Daftar path yang dicoba:")
+    for path in model_paths:
+        st.write(f"  - {path}")
+    
+    st.markdown("""
+    ### 🔧 Possible Solutions:
+    1. **Check model file location** - Pastikan file model ada di direktori yang benar
+    2. **Re-train model** - Model mungkin corrupt atau tidak kompatibel
+    3. **Check TensorFlow version** - Pastikan versi TF sama antara training dan deployment
+    4. **Try different model format** - Coba SavedModel format instead of .h5
+    """)
+    
+    return None, False, None
 
-# Image preprocessing function
-def preprocess_image(image, target_size=(224, 224)):
-    """Preprocess image for model prediction"""
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
+# Enhanced image preprocessing function
+def preprocess_image(image, target_size=(224, 224), target_channels=3):
+    """Enhanced preprocess image for model prediction with channel handling"""
+    
+    # Convert image based on target channels
+    if target_channels == 1:
+        # Convert to grayscale
+        if image.mode != 'L':
+            image = image.convert('L')
+    elif target_channels == 3:
+        # Convert to RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+    else:
+        st.warning(f"⚠️ Unexpected channel count: {target_channels}")
+        # Default to RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
     
     # Resize image to match model input
     image = image.resize(target_size)
@@ -110,33 +170,83 @@ def preprocess_image(image, target_size=(224, 224)):
     img_array = img_to_array(image) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
     
+    st.info(f"📊 Preprocessed image shape: {img_array.shape}")
+    
     return img_array
 
-# Prediction function
+# Enhanced prediction function
 def predict_cataract(model, image, class_indices, input_shape):
-    """Make prediction on preprocessed image"""
-    # Extract target size from input shape
-    if len(input_shape) == 4:  # (batch, height, width, channels)
-        target_size = (input_shape[1], input_shape[2])
-    else:
-        target_size = (224, 224)  # fallback
+    """Enhanced prediction function with better error handling"""
     
-    img_array = preprocess_image(image, target_size)
-    
-    # Get prediction
-    pred = model.predict(img_array, verbose=0)[0][0]
-    
-    # Calculate probabilities based on class mapping
-    if class_indices.get('cataract', 0) == 0:
-        prob_cataract = pred  # Changed: direct assignment
-        prob_normal = 1.0 - pred
-    else:
-        prob_cataract = 1.0 - pred
-        prob_normal = pred
-    
-    return pred, prob_cataract, prob_normal
+    try:
+        # Extract target size and channels from input shape
+        if len(input_shape) == 4:  # (batch, height, width, channels)
+            target_size = (input_shape[1], input_shape[2])
+            target_channels = input_shape[3]
+        else:
+            target_size = (224, 224)  # fallback
+            target_channels = 3  # fallback to RGB
+        
+        st.info(f"🎯 Target size: {target_size}, Channels: {target_channels}")
+        
+        img_array = preprocess_image(image, target_size, target_channels)
+        
+        # Validate preprocessed image shape
+        expected_shape = (1, target_size[0], target_size[1], target_channels)
+        if img_array.shape != expected_shape:
+            st.error(f"❌ Shape mismatch: Expected {expected_shape}, Got {img_array.shape}")
+            return None, None, None
+        
+        # Get prediction
+        with st.spinner('🔮 Making prediction...'):
+            pred = model.predict(img_array, verbose=0)
+            
+        st.info(f"📈 Raw prediction output: {pred}")
+        
+        # Handle different prediction output formats
+        if isinstance(pred, (list, tuple)):
+            pred_value = pred[0][0] if len(pred[0]) == 1 else pred[0]
+        elif pred.ndim == 2 and pred.shape[1] == 1:
+            pred_value = pred[0][0]
+        elif pred.ndim == 2 and pred.shape[1] == 2:
+            # Binary classification with 2 outputs
+            pred_value = pred[0]
+        else:
+            pred_value = pred[0] if pred.ndim > 1 else pred
+        
+        # Calculate probabilities based on output format
+        if isinstance(pred_value, (list, np.ndarray)) and len(pred_value) == 2:
+            # Two-class output
+            prob_class0 = float(pred_value[0])
+            prob_class1 = float(pred_value[1])
+            
+            # Normalize if needed
+            total = prob_class0 + prob_class1
+            if total > 0:
+                prob_class0 /= total
+                prob_class1 /= total
+        else:
+            # Single output (sigmoid)
+            pred_value = float(pred_value)
+            prob_class0 = pred_value
+            prob_class1 = 1.0 - pred_value
+        
+        # Map to cataract/normal based on class indices
+        if class_indices.get('cataract', 0) == 0:
+            prob_cataract = prob_class0
+            prob_normal = prob_class1
+        else:
+            prob_cataract = prob_class1
+            prob_normal = prob_class0
+        
+        return pred_value, prob_cataract, prob_normal
+        
+    except Exception as e:
+        st.error(f"❌ Error in prediction: {str(e)}")
+        st.error(f"🔍 Debug info: Input shape: {input_shape}, Image mode: {image.mode}")
+        return None, None, None
 
-# Visualization functions
+# Visualization functions (unchanged)
 def create_probability_chart(prob_normal, prob_cataract):
     """Create interactive probability chart"""
     
@@ -190,14 +300,14 @@ def create_confidence_gauge(confidence):
     fig.update_layout(height=300)
     return fig
 
-# Main application
+# Enhanced main application
 def main():
     # Header
     st.markdown('<h1 class="main-header">Cataract Detection System</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Upload gambar mata untuk deteksi katarak menggunakan AI</p>', unsafe_allow_html=True)
     
-    # Load model
-    with st.spinner('Loading AI model...'):
+    # Load model with enhanced error handling
+    with st.spinner('🔄 Loading AI model...'):
         model, model_loaded, input_shape = load_model()
     
     if not model_loaded:
@@ -206,21 +316,26 @@ def main():
     # Sidebar for information and settings
     with st.sidebar:
         st.header("ℹ️ Informasi Sistem")
-        st.markdown(f"""
-        **Cataract Detection AI v1.0**
-        
-        **Model Input Size:** {input_shape[1]}x{input_shape[2]} pixels
-        
-        **Cara Penggunaan:**
-        1. Upload gambar mata
-        2. Tunggu proses analisis
-        3. Lihat hasil prediksi
-        
-        **Format Gambar:**
-        - JPG, JPEG, PNG
-        - Resolusi minimal 224x224px
-        - Gambar mata yang jelas
-        """)
+        if input_shape:
+            channels = input_shape[3] if len(input_shape) == 4 else "Unknown"
+            st.markdown(f"""
+            **Cataract Detection AI v2.0**
+            
+            **Model Info:**
+            - Input Size: {input_shape[1] if len(input_shape) > 1 else 'Unknown'}x{input_shape[2] if len(input_shape) > 2 else 'Unknown'} pixels
+            - Channels: {channels}
+            - Format: {'Grayscale' if channels == 1 else 'RGB' if channels == 3 else 'Unknown'}
+            
+            **Cara Penggunaan:**
+            1. Upload gambar mata
+            2. Tunggu proses analisis
+            3. Lihat hasil prediksi
+            
+            **Format Gambar:**
+            - JPG, JPEG, PNG
+            - Resolusi minimal 224x224px
+            - Gambar mata yang jelas
+            """)
         
         st.header("⚙️ Settings")
         confidence_threshold = st.slider(
@@ -236,6 +351,13 @@ def main():
             "Show Technical Details",
             value=False,
             help="Tampilkan detail teknis prediksi"
+        )
+        
+        # Debug option
+        debug_mode = st.checkbox(
+            "Debug Mode",
+            value=False,
+            help="Tampilkan informasi debug tambahan"
         )
     
     # Main content area
@@ -262,17 +384,27 @@ def main():
             - Ukuran: {image.size[0]} x {image.size[1]} pixels
             - Format: {image.format}
             - Mode: {image.mode}
+            - Channels: {len(image.getbands()) if hasattr(image, 'getbands') else 'Unknown'}
             """)
+            
+            if debug_mode:
+                st.markdown("**Debug Info:**")
+                st.write(f"Image bands: {image.getbands() if hasattr(image, 'getbands') else 'N/A'}")
+                st.write(f"Model expects: {input_shape}")
     
     with col2:
         st.header("🔍 Hasil Analisis")
         
         if uploaded_file is not None:
-            with st.spinner('Menganalisis gambar...'):
+            with st.spinner('🔍 Menganalisis gambar...'):
                 try:
                     # Make prediction
                     class_indices = {'cataract': 0, 'normal': 1}  # Default mapping
                     raw_pred, prob_cataract, prob_normal = predict_cataract(model, image, class_indices, input_shape)
+                    
+                    if raw_pred is None:
+                        st.error("❌ Gagal melakukan prediksi")
+                        st.stop()
                     
                     # Determine final prediction
                     max_prob = max(prob_cataract, prob_normal)
@@ -318,14 +450,19 @@ def main():
                         """, unsafe_allow_html=True)
                     
                 except Exception as e:
-                    st.error(f"Error dalam prediksi: {str(e)}")
-                    st.info("💡 Tip: Pastikan model sudah di-training dengan benar")
+                    st.error(f"❌ Error dalam prediksi: {str(e)}")
+                    if debug_mode:
+                        st.exception(e)
+                    st.info("💡 Tips untuk mengatasi error:")
+                    st.write("- Pastikan gambar dalam format yang benar")
+                    st.write("- Coba gambar dengan ukuran yang berbeda")
+                    st.write("- Re-train model jika masalah berlanjut")
                     st.stop()
         else:
             st.info("👆 Upload gambar untuk memulai analisis")
     
     # Charts section
-    if uploaded_file is not None and 'prob_normal' in locals():
+    if uploaded_file is not None and 'prob_normal' in locals() and prob_normal is not None:
         st.header("📊 Visualisasi Hasil")
         
         chart_col1, chart_col2 = st.columns([1, 1])
@@ -347,7 +484,7 @@ def main():
             with st.expander("Model Information", expanded=False):
                 st.markdown(f"""
                 **Model Input Shape:** {input_shape}
-                **Raw Prediction Value:** {raw_pred:.6f}
+                **Raw Prediction Value:** {raw_pred}
                 **Processing Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 
                 **Probability Breakdown:**
@@ -360,13 +497,21 @@ def main():
                 """)
             
             with st.expander("Image Processing Details", expanded=False):
-                target_size = (input_shape[1], input_shape[2]) if input_shape else (224, 224)
+                if input_shape and len(input_shape) == 4:
+                    target_size = (input_shape[1], input_shape[2])
+                    target_channels = input_shape[3]
+                else:
+                    target_size = (224, 224)
+                    target_channels = 3
+                
                 st.markdown(f"""
                 **Original Size:** {image.size[0]} x {image.size[1]}
                 **Processed Size:** {target_size[0]} x {target_size[1]}
+                **Original Channels:** {len(image.getbands()) if hasattr(image, 'getbands') else 'Unknown'}
+                **Target Channels:** {target_channels}
                 **Normalization:** Pixel values scaled to [0, 1]
-                **Color Mode:** RGB
-                **Preprocessing:** Resize + Normalize
+                **Color Mode:** {'Grayscale' if target_channels == 1 else 'RGB'}
+                **Preprocessing:** Resize + Color Convert + Normalize
                 """)
     
     # Footer
@@ -375,40 +520,9 @@ def main():
     <div style="text-align: center; color: #7F8C8D; margin-top: 2rem;">
         <p><strong>⚠️ Disclaimer:</strong> Sistem ini adalah alat bantu diagnosis dan tidak menggantikan konsultasi medis profesional.</p>
         <p>Selalu konsultasikan dengan dokter mata untuk diagnosis yang akurat.</p>
-        <p>Cataract Detection System © 2025 | Powered by TensorFlow & Streamlit</p>
+        <p>Cataract Detection System v2.0 © 2025 | Powered by TensorFlow & Streamlit</p>
     </div>
     """, unsafe_allow_html=True)
-
-# Download results function
-def download_results(prediction_label, confidence, prob_normal, prob_cataract, recommendation):
-    """Generate downloadable report"""
-    
-    report = f"""
-    CATARACT DETECTION REPORT
-    ========================
-    
-    Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-    
-    PREDICTION RESULTS:
-    - Final Prediction: {prediction_label}
-    - Confidence Level: {confidence*100:.1f}%
-    
-    PROBABILITY BREAKDOWN:
-    - Normal Eye: {prob_normal*100:.2f}%
-    - Cataract: {prob_cataract*100:.2f}%
-    
-    RECOMMENDATION:
-    {recommendation}
-    
-    IMPORTANT NOTICE:
-    This system is a diagnostic aid and does not replace professional medical consultation.
-    Always consult with an eye doctor for accurate diagnosis.
-    
-    ========================
-    Cataract Detection System v1.0
-    """
-    
-    return report
 
 if __name__ == "__main__":
     main()
